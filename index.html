@@ -263,78 +263,126 @@
   </div>
 
   <script>
-    // Google Form POST endpoint and entry IDs for the new form
-    const GOOGLE_FORM_POST = 'https://docs.google.com/forms/d/e/1FAIpQLSfyBPdCHIq32CDAgOoGczYteDGe5teNmCsxUlR582rgK2JW2A/formResponse';
-    const ENTRY_DISCORD = 'entry.1259899683';
-    const ENTRY_CLAIMED = 'entry.1528151669';
-    const ENTRY_INFERRED = 'entry.1986395366';
-    const ENTRY_UI_LANG = 'entry.1775649445';
-    const ENTRY_CONSENT = 'entry.2141818004';
+document.addEventListener('DOMContentLoaded', () => {
+  // Google Form POST endpoint and entry IDs for the new form
+  const GOOGLE_FORM_POST = 'https://docs.google.com/forms/d/e/1FAIpQLSfyBPdCHIq32CDAgOoGczYteDGe5teNmCsxUlR582rgK2JW2A/formResponse';
+  const ENTRY_DISCORD = 'entry.1259899683';
+  const ENTRY_CLAIMED = 'entry.1528151669';
+  const ENTRY_INFERRED = 'entry.1986395366';
+  const ENTRY_UI_LANG = 'entry.1775649445';
+  const ENTRY_CONSENT = 'entry.2141818004';
 
-    const form = document.getElementById('verifyForm');
-    const status = document.getElementById('status');
-    const submitBtn = document.getElementById('submitBtn');
+  const form = document.getElementById('verifyForm');
+  const status = document.getElementById('status');
+  const submitBtn = document.getElementById('submitBtn');
 
-    async function reverseGeocode(lat, lon) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&zoom=5&addressdetails=1`;
-        const r = await fetch(url, { headers: {'User-Agent': 'discord-verification/1.0 (contact@example.com)'}});
-        if (!r.ok) throw new Error('reverse geocode failed');
-        const j = await r.json();
-        const addr = j.address || {};
-        return addr.state || addr.county || addr.region || addr.country || 'unknown';
-      } catch (err) {
-        return 'unknown';
-      }
+  if (!form || !status || !submitBtn) {
+    console.error('Missing required DOM elements:', { form: !!form, status: !!status, submitBtn: !!submitBtn });
+    return;
+  }
+
+  async function reverseGeocode(lat, lon) {
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&zoom=5&addressdetails=1`;
+      const r = await fetch(url, { headers: {'User-Agent': 'discord-verification/1.0 (contact@example.com)'}});
+      if (!r.ok) throw new Error('reverse geocode failed');
+      const j = await r.json();
+      const addr = j.address || {};
+      return addr.state || addr.county || addr.region || addr.country || 'unknown';
+    } catch (err) {
+      console.warn('reverseGeocode failed:', err);
+      return 'unknown';
     }
+  }
 
-    function getGeolocation(timeoutMs = 8000) {
-      return new Promise((resolve) => {
-        if (!navigator.geolocation) return resolve({consent:'unavailable', region:'unknown'});
-        let handled = false;
-        const timer = setTimeout(() => { if (!handled) { handled = true; resolve({consent:'timeout', region:'unknown'}); } }, timeoutMs);
-        navigator.geolocation.getCurrentPosition(async (pos) => {
-          if (handled) return;
-          handled = true; clearTimeout(timer);
-          const lat = pos.coords.latitude; const lon = pos.coords.longitude;
-          const region = await reverseGeocode(lat, lon);
-          resolve({consent:'granted', region});
-        }, () => { if (handled) return; handled = true; clearTimeout(timer); resolve({consent:'denied', region:'geolocation-denied'}); }, {maximumAge:60000, timeout:timeoutMs});
-      });
-    }
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      status.textContent = 'Collecting data…';
-      submitBtn.disabled = true;
-      const discord = document.getElementById('discord').value.trim();
-      const claimed = document.getElementById('claimed').value.trim();
-      if (!discord || !claimed) { status.textContent = 'Please fill both fields.'; submitBtn.disabled = false; return; }
-      const ui_language = navigator.language || navigator.userLanguage || '';
-      try {
-        const geo = await getGeolocation();
-        const inferred_region = geo.region || (geo.consent === 'denied' ? 'geolocation-denied' : 'unknown');
-
-        const fd = new FormData();
-        fd.append(ENTRY_DISCORD, discord);
-        fd.append(ENTRY_CLAIMED, claimed);
-        fd.append(ENTRY_INFERRED, inferred_region);
-        fd.append(ENTRY_UI_LANG, ui_language);
-        fd.append(ENTRY_CONSENT, geo.consent);
-
-        // POST to Google Forms; use no-cors so fetch from static site succeeds
-        await fetch(GOOGLE_FORM_POST, { method:'POST', body:fd, mode:'no-cors' });
-
-        // Show final thank-you message exactly as requested
-        status.innerHTML = 'Thank you, your verification request has been submitted. Please inform server admins of your request, and we\\'ll review the request as quickly as we can!';
-        form.reset();
-      } catch (err) {
-        console.error(err);
-        status.textContent = 'Submission failed. Try again.';
-      } finally {
-        submitBtn.disabled = false;
-      }
+  function getGeolocation(timeoutMs = 8000) {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve({consent:'unavailable', region:'unknown'});
+      let handled = false;
+      const timer = setTimeout(() => { if (!handled) { handled = true; resolve({consent:'timeout', region:'unknown'}); } }, timeoutMs);
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        if (handled) return;
+        handled = true; clearTimeout(timer);
+        const lat = pos.coords.latitude; const lon = pos.coords.longitude;
+        const region = await reverseGeocode(lat, lon);
+        resolve({consent:'granted', region});
+      }, () => { if (handled) return; handled = true; clearTimeout(timer); resolve({consent:'denied', region:'geolocation-denied'}); }, {maximumAge:60000, timeout:timeoutMs});
     });
+  }
+
+  // Hidden form + iframe submit helper (more reliable for Google Forms than fetch no-cors)
+  function submitToGoogleForm(payload) {
+    const targetUrl = GOOGLE_FORM_POST;
+    const formEl = document.createElement('form');
+    formEl.method = 'POST';
+    formEl.action = targetUrl;
+    formEl.target = 'hidden_iframe';
+    formEl.style.display = 'none';
+
+    for (const key in payload) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = key;
+      input.value = payload[key];
+      formEl.appendChild(input);
+    }
+
+    document.body.appendChild(formEl);
+
+    let iframe = document.getElementById('hidden_iframe');
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.name = 'hidden_iframe';
+      iframe.id = 'hidden_iframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+    }
+
+    formEl.submit();
+    document.body.removeChild(formEl);
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    status.textContent = 'Collecting data…';
+    submitBtn.disabled = true;
+
+    const discord = (document.getElementById('discord') || {}).value?.trim() || '';
+    const claimed = (document.getElementById('claimed') || {}).value?.trim() || '';
+    if (!discord || !claimed) {
+      status.textContent = 'Please fill both fields.';
+      submitBtn.disabled = false;
+      return;
+    }
+
+    const ui_language = navigator.language || navigator.userLanguage || '';
+    try {
+      const geo = await getGeolocation();
+      const inferred_region = geo.region || (geo.consent === 'denied' ? 'geolocation-denied' : 'unknown');
+
+      const payload = {};
+      payload[ENTRY_DISCORD] = discord;
+      payload[ENTRY_CLAIMED] = claimed;
+      payload[ENTRY_INFERRED] = inferred_region;
+      payload[ENTRY_UI_LANG] = ui_language;
+      payload[ENTRY_CONSENT] = geo.consent;
+
+      // Use hidden form submit instead of fetch(..., mode: 'no-cors')
+      submitToGoogleForm(payload);
+
+      // Show final thank-you message and reset UI
+      status.innerHTML = "Thank you, your verification request has been submitted. Please inform server admins of your request, and we'll review the request as quickly as we can!";
+      form.reset();
+
+      // Prevent accidental double-submits: keep disabled briefly
+      setTimeout(() => { submitBtn.disabled = false; }, 2000);
+    } catch (err) {
+      console.error(err);
+      status.textContent = 'Submission failed. Try again.';
+      submitBtn.disabled = false;
+    }
+  });
+});
   </script>
 </body>
 </html>
